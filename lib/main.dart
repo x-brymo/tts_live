@@ -1,17 +1,18 @@
+import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'dart:async';
-
 import 'package:flutter/services.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:livespeechtotext/livespeechtotext.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:tts_by_ai/notes_page.dart';
 
-
-void main() {
+void main()async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  await Hive.initFlutter();
+  await Hive.openBox('notesBox');
   runApp(const MyApp());
 }
 
@@ -29,6 +30,9 @@ class _MyAppState extends State<MyApp> {
   StreamSubscription<dynamic>? onSuccessEvent;
 
   bool microphoneGranted = false;
+  List<MapEntry<String, String>> _locales = [];
+String? _selectedLocale;
+
 
   @override
   void initState() {
@@ -40,10 +44,26 @@ class _MyAppState extends State<MyApp> {
 
     //   setState(() {});
     // });
+    _livespeechtotextPlugin.getSupportedLocales().then((value) {
+  if (value != null) {
+    value.entries.forEach((entry) {
+      print('${entry.key} => ${entry.value}');
+    });
+  }
+});
+    _livespeechtotextPlugin.getSupportedLocales().then((value) {
+  if (value != null) {
+    setState(() {
+      _locales = value.entries.toList();
+      _selectedLocale = _locales.first.key;
+    });
+  }
+});
 
-    _livespeechtotextPlugin.getLocaleDisplayName().then((value) => setState(
-          () => _localeDisplayName = value,
-        ));
+
+    _livespeechtotextPlugin.getLocaleDisplayName().then(
+      (value) => setState(() => _localeDisplayName = value),
+    );
 
     // onSuccessEvent = _livespeechtotextPlugin.addEventListener('success', (text) {
     //   setState(() {
@@ -72,13 +92,80 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Live Speech To Text'),
-        ),
+        appBar: AppBar(title: const Text('Live Speech To Text')),
         body: Center(
           child: Column(
             children: [
-              Text(_recognisedText),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.deepPurple, width: 1),          
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      "Recognised Text",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      _recognisedText.isEmpty
+                          ? "No text"
+                          : (_recognisedText.length > 1000
+                              ? _recognisedText.substring(0, 1000) + '...'
+                              : _recognisedText),
+                      style: const TextStyle(fontSize: 20),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed:
+                              _recognisedText.isNotEmpty
+                                  ? () async {
+                                    final box = await Hive.openBox('notesBox');
+                                    await box.add(_recognisedText);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          "Text saved to Hive notes",
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  : null,
+                          icon: const Icon(Icons.save),
+                          label: const Text("Save to Notes"),
+                        ),
+                        const SizedBox(width: 12),
+                        ElevatedButton.icon(
+                          onPressed:
+                              _recognisedText.isNotEmpty
+                                  ? () {
+                                    Clipboard.setData(
+                                      ClipboardData(text: _recognisedText),
+                                    );
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text("Copied to Clipboard"),
+                                      ),
+                                    );
+                                  }
+                                  : null,
+                          icon: const Icon(Icons.copy),
+                          label: const Text("Copy"),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              //Text(_recognisedText),
               if (!microphoneGranted)
                 ElevatedButton(
                   onPressed: () {
@@ -87,8 +174,9 @@ class _MyAppState extends State<MyApp> {
                   child: const Text("Check Permissions"),
                 ),
               ElevatedButton(
-                  onPressed: microphoneGranted
-                      ? () {
+                onPressed:
+                    microphoneGranted
+                        ? () {
                           print("start button pressed");
                           try {
                             _livespeechtotextPlugin.start();
@@ -96,11 +184,13 @@ class _MyAppState extends State<MyApp> {
                             print('error');
                           }
                         }
-                      : null,
-                  child: const Text('Start')),
+                        : null,
+                child: const Text('Start'),
+              ),
               ElevatedButton(
-                  onPressed: microphoneGranted
-                      ? () {
+                onPressed:
+                    microphoneGranted
+                        ? () {
                           print("stop button pressed");
                           try {
                             _livespeechtotextPlugin.stop();
@@ -108,9 +198,67 @@ class _MyAppState extends State<MyApp> {
                             print('error');
                           }
                         }
-                      : null,
-                  child: const Text('Stop')),
+                        : null,
+                child: const Text('Stop'),
+              ),
               Text("Locale: $_localeDisplayName"),
+              ElevatedButton(
+                onPressed: () async {
+                  var result = await _livespeechtotextPlugin.getText();
+                  print(result);
+                },
+                child: const Text('Get Text'),
+              ),
+              
+              Builder(
+                builder: (context) {
+                  return ElevatedButton.icon(
+                    icon: const Icon(Icons.notes),
+                    label: const Text("View Notes"),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const NotesPage()),
+                      );
+                    },
+                  );
+                }
+              ),
+             if (_locales.isNotEmpty)
+  Padding(
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "اختر اللغة:",
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        DropdownButton<String>(
+          value: _selectedLocale,
+          items: _locales.map((entry) {
+            return DropdownMenuItem<String>(
+              value: entry.key,
+              child: Text('${entry.value} (${entry.key})'),
+            );
+          }).toList(),
+          onChanged: (value) async {
+            if (value != null) {
+              setState(() => _selectedLocale = value);
+              await _livespeechtotextPlugin.setLocale(value);
+              final displayName = await _livespeechtotextPlugin.getLocaleDisplayName();
+              setState(() {
+                _localeDisplayName = displayName;
+              });
+            }
+          },
+        ),
+      ],
+    ),
+  ),
+
+
             ],
           ),
         ),
@@ -121,59 +269,63 @@ class _MyAppState extends State<MyApp> {
   Future<dynamic> binding() async {
     onSuccessEvent?.cancel();
 
-    return Future.wait([]).then((_) async {
-      // Check if the user has already granted microphone permission.
-      var permissionStatus = await Permission.microphone.status;
+    return Future.wait([])
+        .then((_) async {
+          // Check if the user has already granted microphone permission.
+          var permissionStatus = await Permission.microphone.status;
 
-      // If the user has not granted permission, prompt them for it.
-      if (!microphoneGranted) {
-        await Permission.microphone.request();
+          // If the user has not granted permission, prompt them for it.
+          if (!microphoneGranted) {
+            await Permission.microphone.request();
 
-        // Check if the user has already granted the permission.
-        permissionStatus = await Permission.microphone.status;
+            // Check if the user has already granted the permission.
+            permissionStatus = await Permission.microphone.status;
 
-        if (!permissionStatus.isGranted) {
-          return Future.error('Microphone access denied');
-        }
-      }
-
-      // Check if the user has already granted speech permission.
-      if (Platform.isIOS) {
-        var speechStatus = await Permission.speech.status;
-
-        // If the user has not granted permission, prompt them for it.
-        if (!microphoneGranted) {
-          await Permission.speech.request();
-
-          // Check if the user has already granted the permission.
-          speechStatus = await Permission.speech.status;
-
-          if (!speechStatus.isGranted) {
-            return Future.error('Speech access denied');
+            if (!permissionStatus.isGranted) {
+              return Future.error('Microphone access denied');
+            }
           }
-        }
-      }
 
-      return Future.value(true);
-    }).then((value) {
-      microphoneGranted = true;
+          // Check if the user has already granted speech permission.
+          if (Platform.isIOS) {
+            var speechStatus = await Permission.speech.status;
 
-      // listen to event "success"
-      onSuccessEvent =
-          _livespeechtotextPlugin.addEventListener("success", (value) {
-        if (value.runtimeType != String) return;
-        if ((value as String).isEmpty) return;
+            // If the user has not granted permission, prompt them for it.
+            if (!microphoneGranted) {
+              await Permission.speech.request();
 
-        setState(() {
-          _recognisedText = value;
+              // Check if the user has already granted the permission.
+              speechStatus = await Permission.speech.status;
+
+              if (!speechStatus.isGranted) {
+                return Future.error('Speech access denied');
+              }
+            }
+          }
+
+          return Future.value(true);
+        })
+        .then((value) {
+          microphoneGranted = true;
+
+          // listen to event "success"
+          onSuccessEvent = _livespeechtotextPlugin.addEventListener("success", (
+            value,
+          ) {
+            if (value.runtimeType != String) return;
+            if ((value as String).isEmpty) return;
+
+            setState(() {
+              _recognisedText = value;
+            });
+          });
+
+          setState(() {});
+        })
+        .onError((error, stackTrace) {
+          // toast
+          log(error.toString());
+          // open app setting
         });
-      });
-
-      setState(() {});
-    }).onError((error, stackTrace) {
-      // toast
-      log(error.toString());
-      // open app setting
-    });
   }
 }
